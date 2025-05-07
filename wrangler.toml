@@ -1,0 +1,72 @@
+name = "impossibledb"
+main = "src/index.ts"
+compatibility_date = "2025-04-28"
+compatibility_flags = ["nodejs_compat"]
+
+# Development environment
+[env.dev]
+workers_dev = true
+vars = { ENVIRONMENT = "development" }
+
+[env.dev.durable_objects]
+bindings = [
+  { name = "STORAGE_OBJECT", class_name = "StorageObject" }
+]
+
+# Testing environment
+[env.test]
+workers_dev = true
+vars = { ENVIRONMENT = "test" }
+
+[env.test.durable_objects]
+bindings = [
+  { name = "STORAGE_OBJECT", class_name = "StorageObject" }
+]
+
+# Production environment
+[env.production]
+workers_dev = true
+vars = { ENVIRONMENT = "production" }
+# Uncomment when the domain is set up to be proxied by Cloudflare
+# routes = [
+#   { pattern = "api.impossibledb.com", custom_domain = true }
+# ]
+
+[env.production.durable_objects]
+bindings = [
+  { name = "STORAGE_OBJECT", class_name = "StorageObject" }
+]
+
+# Durable Object configuration
+[durable_objects]
+bindings = [
+  { name = "STORAGE_OBJECT", class_name = "StorageObject" }
+]
+
+# KV Namespace bindings (will be created when needed)
+# [kv_namespaces]
+# bindings = [
+#   { binding = "CONFIG_KV", id = "YOUR_KV_ID_HERE" },
+#   { binding = "ROUTING_KV", id = "YOUR_KV_ID_HERE" }
+# ]
+
+# Analytics Engine binding (for future use)
+# [analytics_engine_datasets]
+# bindings = [
+#   { binding = "ANALYTICS", dataset = "impossibledb-analytics" }
+# ]
+
+# Migrations
+[[migrations]]
+tag = "v1" # Should be unique for each migration
+new_sqlite_classes = ["StorageObject"]
+
+# Build configuration
+[build]
+command = "npm run build"
+watch_dir = "src"
+
+# Dev configuration
+[dev]
+port = 8787
+local_protocol = "http"

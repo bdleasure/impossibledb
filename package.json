@@ -1,19 +1,36 @@
 {
 	"name": "impossibledb",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"private": true,
+	"description": "The Impossibly Fast Global Database Built on Cloudflare Durable Objects",
 	"scripts": {
+		"build": "tsc",
+		"format": "prettier --write '**/*.{js,ts}'",
+		"lint": "eslint --ext .js,.ts .",
 		"deploy": "wrangler deploy",
+		"deploy:dev": "wrangler deploy --env dev",
+		"deploy:test": "wrangler deploy --env test",
+		"deploy:production": "wrangler deploy --env production",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
+		"test:coverage": "vitest run --coverage",
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"@cloudflare/workers-types": "^4.20250507.0",
+		"@typescript-eslint/eslint-plugin": "^7.0.0",
+		"@typescript-eslint/parser": "^7.0.0",
+		"eslint": "^8.56.0",
+		"eslint-config-prettier": "^9.1.0",
+		"prettier": "^3.2.5",
 		"typescript": "^5.5.2",
 		"vitest": "~3.0.7",
+		"vitest-environment-miniflare": "^2.14.4",
 		"wrangler": "^4.14.1"
+	},
+	"engines": {
+		"node": ">=18.0.0"
 	}
 }
