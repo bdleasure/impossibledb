@@ -1,221 +1,258 @@
 /**
- * ImpossibleDB Client SDK
+ * ImpossibleDB Client
  * 
- * A simple client library for interacting with ImpossibleDB from web applications.
- * This provides a clean, intuitive API for working with the database.
+ * This module provides the main client interface for interacting with ImpossibleDB.
+ * It allows for creating and accessing collections, as well as managing database
+ * configuration and connections.
  */
 
-export interface Document {
-    _id?: string;
-    _collection?: string;
-    _version?: number;
-    _createdAt?: number;
-    _updatedAt?: number;
-    [key: string]: any;
+import { Collection, CreateOptions, UpdateOptions, DeleteOptions } from './Collection';
+import { Transaction, TransactionResult } from './Transaction';
+import { Document, QueryFilter, QueryOptions, QueryResult, ErrorCode, TransactionOperation } from '../types';
+import { ImpossibleDBError } from '../utils/errorHandler';
+import { AggregationSpec } from '../query/aggregator';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * Client configuration options
+ */
+export interface ClientConfig {
+  // The endpoint URL for the ImpossibleDB server
+  endpoint: string;
+  
+  // API key for authentication (if required)
+  apiKey?: string;
+  
+  // Request timeout in milliseconds
+  timeout?: number;
+  
+  // Maximum number of retries for failed requests
+  maxRetries?: number;
+  
+  // Whether to use HTTPS for requests
+  useHttps?: boolean;
+}
+
+/**
+ * Default client configuration
+ */
+const DEFAULT_CONFIG: ClientConfig = {
+  endpoint: 'localhost:8787',
+  timeout: 30000,
+  maxRetries: 3,
+  useHttps: true
+};
+
+/**
+ * ImpossibleDB client for interacting with the database
+ */
+export class ImpossibleDBClient {
+  private readonly config: ClientConfig;
+  private readonly collections: Map<string, Collection> = new Map();
+  
+  /**
+   * Creates a new ImpossibleDBClient instance
+   * 
+   * @param config Client configuration
+   */
+  constructor(config: Partial<ClientConfig> = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
   }
   
-  export interface QueryFilter {
-    field: string;
-    operator: '=' | '!=' | '>' | '>=' | '<' | '<=';
-    value: any;
+  /**
+   * Gets the client configuration
+   * 
+   * @returns The client configuration
+   */
+  getConfig(): ClientConfig {
+    return { ...this.config };
   }
   
-  export interface QueryOptions {
-    limit?: number;
-    offset?: number;
-    sort?: { field: string; direction: 'asc' | 'desc' }[];
+  /**
+   * Gets a collection by name, creating it if it doesn't exist
+   * 
+   * @param name The name of the collection
+   * @returns The collection
+   */
+  collection(name: string): Collection {
+    if (!name || typeof name !== 'string') {
+      throw new ImpossibleDBError(
+        ErrorCode.INVALID_REQUEST,
+        'Collection name is required and must be a string'
+      );
+    }
+    
+    // Return the cached collection if it exists
+    if (this.collections.has(name)) {
+      return this.collections.get(name)!;
+    }
+    
+    // Create a new collection
+    const collection = new Collection(
+      name,
+      this.executeQuery.bind(this),
+      this.executeCreate.bind(this),
+      this.executeRead.bind(this),
+      this.executeUpdate.bind(this),
+      this.executeDelete.bind(this),
+      () => this.createTransaction()
+    );
+    
+    // Cache the collection
+    this.collections.set(name, collection);
+    
+    return collection;
   }
   
-  export class QueryBuilder {
-    private filters: QueryFilter[] = [];
-    private options: QueryOptions = {};
-    
-    constructor(
-      private client: ImpossibleDBClient,
-      private collection: string
-    ) {}
-    
-    /**
-     * Adds a filter to the query
-     */
-    filter(field: string, operator: '=' | '!=' | '>' | '>=' | '<' | '<=', value: any): QueryBuilder {
-      this.filters.push({ field, operator, value });
-      return this;
-    }
-    
-    /**
-     * Sets the maximum number of results to return
-     */
-    limit(limit: number): QueryBuilder {
-      this.options.limit = limit;
-      return this;
-    }
-    
-    /**
-     * Sets the number of results to skip
-     */
-    offset(offset: number): QueryBuilder {
-      this.options.offset = offset;
-      return this;
-    }
-    
-    /**
-     * Adds a sort option to the query
-     */
-    sort(field: string, direction: 'asc' | 'desc' = 'asc'): QueryBuilder {
-      if (!this.options.sort) {
-        this.options.sort = [];
-      }
-      this.options.sort.push({ field, direction });
-      return this;
-    }
-    
-    /**
-     * Executes the query and returns the results
-     */
-    async execute(): Promise<Document[]> {
-      return this.client.executeQuery(this.collection, this.filters, this.options);
-    }
+  /**
+   * Creates a new transaction
+   * 
+   * @returns A new Transaction instance
+   */
+  createTransaction(): Transaction {
+    const transactionId = uuidv4();
+    return new Transaction(transactionId, this.executeTransaction.bind(this));
   }
   
-  export class Collection {
-    constructor(
-      private client: ImpossibleDBClient,
-      private name: string
-    ) {}
-    
-    /**
-     * Retrieves a document by ID
-     */
-    async get(id: string): Promise<Document | null> {
-      return this.client.getDocument(this.name, id);
-    }
-    
-    /**
-     * Creates or updates a document
-     */
-    async put(id: string, data: Document): Promise<Document> {
-      return this.client.putDocument(this.name, id, data);
-    }
-    
-    /**
-     * Deletes a document by ID
-     */
-    async delete(id: string): Promise<boolean> {
-      return this.client.deleteDocument(this.name, id);
-    }
-    
-    /**
-     * Creates a query builder for this collection
-     */
-    query(): QueryBuilder {
-      return new QueryBuilder(this.client, this.name);
-    }
+  /**
+   * Executes a query
+   * 
+   * @param collection The collection to query
+   * @param filters The query filters
+   * @param projection The fields to include in the results
+   * @param options Query options
+   * @param aggregations Aggregation specifications
+   * @returns The query results
+   */
+  private async executeQuery(
+    collection: string,
+    filters: QueryFilter[],
+    projection?: string[],
+    options?: QueryOptions,
+    aggregations?: AggregationSpec[]
+  ): Promise<QueryResult> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    return {
+      results: [],
+      metadata: {
+        total: 0,
+        limit: options?.limit || 10,
+        offset: options?.offset || 0
+      }
+    };
   }
   
-  export class ImpossibleDBClient {
-    private baseUrl: string;
-    
-    /**
-     * Creates a new ImpossibleDB client
-     * 
-     * @param baseUrl The base URL of the ImpossibleDB API
-     */
-    constructor(baseUrl: string = typeof self !== 'undefined' && 'location' in self ? (self as any).location?.origin : 'https://impossibledb-production.bdleasure.workers.dev') {
-      this.baseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    }
-    
-    /**
-     * Gets a reference to a collection
-     */
-    collection(name: string): Collection {
-      return new Collection(this, name);
-    }
-    
-    /**
-     * Retrieves a document by ID
-     */
-    async getDocument(collection: string, id: string): Promise<Document | null> {
-      const url = `${this.baseUrl}/api/data/${collection}/${id}`;
-      const response = await fetch(url);
-      
-      if (response.status === 404) {
-        return null;
-      }
-      
-      if (!response.ok) {
-        throw new Error(`Failed to get document: ${response.statusText}`);
-      }
-      
-      return await response.json();
-    }
-    
-    /**
-     * Creates or updates a document
-     */
-    async putDocument(collection: string, id: string, data: Document): Promise<Document> {
-      const url = `${this.baseUrl}/api/data/${collection}/${id}`;
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to put document: ${response.statusText}`);
-      }
-      
-      return await response.json();
-    }
-    
-    /**
-     * Deletes a document by ID
-     */
-    async deleteDocument(collection: string, id: string): Promise<boolean> {
-      const url = `${this.baseUrl}/api/data/${collection}/${id}`;
-      const response = await fetch(url, {
-        method: 'DELETE'
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to delete document: ${response.statusText}`);
-      }
-      
-      const result = await response.json() as Record<string, any>;
-      return result.deleted === true;
-    }
-    
-    /**
-     * Executes a query against a collection
-     */
-    async executeQuery(
-      collection: string,
-      filters: QueryFilter[],
-      options: QueryOptions
-    ): Promise<Document[]> {
-      const url = `${this.baseUrl}/api/data/${collection}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          collection,
-          filters,
-          options
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to execute query: ${response.statusText}`);
-      }
-      
-      const result = await response.json() as Record<string, any>;
-      return result.results || [];
-    }
+  /**
+   * Creates a document
+   * 
+   * @param collection The collection to create the document in
+   * @param document The document to create
+   * @param options Options for creating the document
+   * @returns The created document
+   */
+  private async executeCreate(
+    collection: string,
+    document: Partial<Document>,
+    options?: CreateOptions
+  ): Promise<Document> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    const now = Date.now();
+    return {
+      ...document,
+      _id: document._id || uuidv4(),
+      _collection: collection,
+      _version: 1,
+      _createdAt: now,
+      _updatedAt: now
+    } as Document;
   }
   
-  // Default export to make it easy to use
-  export default ImpossibleDBClient;
+  /**
+   * Reads a document
+   * 
+   * @param collection The collection to read from
+   * @param id The ID of the document to read
+   * @returns The document
+   */
+  private async executeRead(
+    collection: string,
+    id: string
+  ): Promise<Document> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    const now = Date.now();
+    return {
+      _id: id,
+      _collection: collection,
+      _version: 1,
+      _createdAt: now,
+      _updatedAt: now
+    } as Document;
+  }
+  
+  /**
+   * Updates a document
+   * 
+   * @param collection The collection to update
+   * @param id The ID of the document to update
+   * @param document The document fields to update
+   * @param options Options for updating the document
+   * @returns The updated document
+   */
+  private async executeUpdate(
+    collection: string,
+    id: string,
+    document: Partial<Document>,
+    options?: UpdateOptions
+  ): Promise<Document> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    const now = Date.now();
+    return {
+      ...document,
+      _id: id,
+      _collection: collection,
+      _version: 2,
+      _createdAt: now - 1000, // Pretend it was created 1 second ago
+      _updatedAt: now
+    } as Document;
+  }
+  
+  /**
+   * Deletes a document
+   * 
+   * @param collection The collection to delete from
+   * @param id The ID of the document to delete
+   * @param options Options for deleting the document
+   */
+  private async executeDelete(
+    collection: string,
+    id: string,
+    options?: DeleteOptions
+  ): Promise<void> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    return Promise.resolve();
+  }
+  
+  /**
+   * Executes a transaction
+   * 
+   * @param operations The operations to execute
+   * @returns The transaction result
+   */
+  private async executeTransaction(
+    operations: TransactionOperation[]
+  ): Promise<TransactionResult> {
+    // In a real implementation, this would make a request to the server
+    // For now, we'll just return a mock result
+    return {
+      id: uuidv4(),
+      status: 'COMMITTED',
+      operations,
+      timestamp: Date.now()
+    } as TransactionResult;
+  }
+}
