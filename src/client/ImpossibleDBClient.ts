@@ -12,6 +12,7 @@ import { Document, QueryFilter, QueryOptions, QueryResult, ErrorCode, Transactio
 import { ImpossibleDBError } from '../utils/errorHandler';
 import { AggregationSpec } from '../query/aggregator';
 import { v4 as uuidv4 } from 'uuid';
+import { HttpClient, RequestOptions } from './HttpClient';
 
 /**
  * Client configuration options
@@ -49,6 +50,7 @@ const DEFAULT_CONFIG: ClientConfig = {
 export class ImpossibleDBClient {
   private readonly config: ClientConfig;
   private readonly collections: Map<string, Collection> = new Map();
+  private readonly httpClient: HttpClient;
   
   /**
    * Creates a new ImpossibleDBClient instance
@@ -57,6 +59,7 @@ export class ImpossibleDBClient {
    */
   constructor(config: Partial<ClientConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.httpClient = new HttpClient(this.config);
   }
   
   /**
@@ -83,8 +86,9 @@ export class ImpossibleDBClient {
     }
     
     // Return the cached collection if it exists
-    if (this.collections.has(name)) {
-      return this.collections.get(name)!;
+    const existingCollection = this.collections.get(name);
+    if (existingCollection) {
+      return existingCollection;
     }
     
     // Create a new collection
@@ -131,16 +135,22 @@ export class ImpossibleDBClient {
     options?: QueryOptions,
     aggregations?: AggregationSpec[]
   ): Promise<QueryResult> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    return {
-      results: [],
-      metadata: {
-        total: 0,
-        limit: options?.limit || 10,
-        offset: options?.offset || 0
-      }
+    const requestOptions: RequestOptions = {
+      timeout: this.config.timeout || 30000
     };
+    
+    const queryData = {
+      filters,
+      projection,
+      options,
+      aggregations
+    };
+    
+    return this.httpClient.post<QueryResult>(
+      `collections/${collection}/query`,
+      queryData,
+      requestOptions
+    );
   }
   
   /**
@@ -156,17 +166,20 @@ export class ImpossibleDBClient {
     document: Partial<Document>,
     options?: CreateOptions
   ): Promise<Document> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    const now = Date.now();
-    return {
-      ...document,
-      _id: document._id || uuidv4(),
-      _collection: collection,
-      _version: 1,
-      _createdAt: now,
-      _updatedAt: now
-    } as Document;
+    const requestOptions: RequestOptions = {
+      timeout: this.config.timeout || 30000
+    };
+    
+    // Generate an ID if one wasn't provided
+    if (!document._id) {
+      document._id = uuidv4();
+    }
+    
+    return this.httpClient.post<Document>(
+      `collections/${collection}/documents`,
+      document,
+      requestOptions
+    );
   }
   
   /**
@@ -180,16 +193,14 @@ export class ImpossibleDBClient {
     collection: string,
     id: string
   ): Promise<Document> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    const now = Date.now();
-    return {
-      _id: id,
-      _collection: collection,
-      _version: 1,
-      _createdAt: now,
-      _updatedAt: now
-    } as Document;
+    const requestOptions: RequestOptions = {
+      timeout: this.config.timeout || 30000
+    };
+    
+    return this.httpClient.get<Document>(
+      `collections/${collection}/documents/${id}`,
+      requestOptions
+    );
   }
   
   /**
@@ -207,17 +218,15 @@ export class ImpossibleDBClient {
     document: Partial<Document>,
     options?: UpdateOptions
   ): Promise<Document> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    const now = Date.now();
-    return {
-      ...document,
-      _id: id,
-      _collection: collection,
-      _version: 2,
-      _createdAt: now - 1000, // Pretend it was created 1 second ago
-      _updatedAt: now
-    } as Document;
+    const requestOptions: RequestOptions = {
+      timeout: this.config.timeout || 30000
+    };
+    
+    return this.httpClient.put<Document>(
+      `collections/${collection}/documents/${id}`,
+      document,
+      requestOptions
+    );
   }
   
   /**
@@ -232,9 +241,14 @@ export class ImpossibleDBClient {
     id: string,
     options?: DeleteOptions
   ): Promise<void> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    return Promise.resolve();
+    const requestOptions: RequestOptions = {
+      timeout: this.config.timeout || 30000
+    };
+    
+    return this.httpClient.delete<void>(
+      `collections/${collection}/documents/${id}`,
+      requestOptions
+    );
   }
   
   /**
@@ -246,13 +260,14 @@ export class ImpossibleDBClient {
   private async executeTransaction(
     operations: TransactionOperation[]
   ): Promise<TransactionResult> {
-    // In a real implementation, this would make a request to the server
-    // For now, we'll just return a mock result
-    return {
-      id: uuidv4(),
-      status: 'COMMITTED',
-      operations,
-      timestamp: Date.now()
-    } as TransactionResult;
+    const requestOptions: RequestOptions = {
+      timeout: (this.config.timeout || 30000) * 2 // Transactions may take longer
+    };
+    
+    return this.httpClient.post<TransactionResult>(
+      'transactions',
+      { operations },
+      requestOptions
+    );
   }
 }
