@@ -69,6 +69,8 @@ When the domain is set up to be proxied by Cloudflare, you can uncomment the rou
 ImpossibleDB is now production-ready with the following components fully implemented:
 
 - ✅ Storage Object implementation with CRUD operations
+- ✅ ShardManager for shard distribution and allocation
+- ✅ TransactionCoordinator for distributed transactions
 - ✅ Consistent hashing for data distribution
 - ✅ Locality-aware routing for performance optimization
 - ✅ Advanced query system with filtering, sorting, and aggregation
@@ -81,11 +83,11 @@ See the [Development Roadmap](./ROADMAP.md) for upcoming features and priorities
 
 We welcome contributions to ImpossibleDB! The highest priority areas for contribution are:
 
-1. HTTP client implementation for server communication
-2. Server-side transaction support
-3. Advanced query features (full-text search, geospatial queries)
-4. Performance optimization and caching
-5. Error handling and retry logic
+1. Synchronization components (twoPhaseCommit, conflictDetector, lockManager)
+2. Advanced query features (full-text search, geospatial queries)
+3. Performance optimization and caching
+4. Error handling and retry logic
+5. Developer tools and monitoring
 
 Please read our [Development Workflow](./DEVELOPMENT_WORKFLOW.md) guide before submitting pull requests.
 

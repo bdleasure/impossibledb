@@ -1,24 +1,30 @@
 /**
  * Locality Manager Implementation
  * 
- * This file implements the locality awareness component of ImpossibleDB's routing layer.
- * It optimizes data placement and request routing based on client location to minimize latency.
+ * This file implements the LocalityManager interface defined in interfaces.ts.
+ * It provides functionality for optimizing data access based on client locality,
+ * helping to reduce latency by routing requests to the closest available node.
  */
 
 import { LocalityManager, NodeMetrics } from './interfaces';
+import { createLogger } from '../utils/logger';
+import { CONFIG } from '../config';
+
+const logger = createLogger('LocalityManager');
 
 /**
- * Client location information with associated metrics
+ * Client location information
  */
 interface ClientLocation {
+  clientId: string;
   location: string;
   lastSeen: number;
 }
 
 /**
- * Node performance data with location information
+ * Node performance and location information
  */
-interface NodeData {
+interface NodePerformance {
   nodeId: string;
   location: string;
   metrics: NodeMetrics;
@@ -27,25 +33,20 @@ interface NodeData {
 
 /**
  * Implementation of the LocalityManager interface
- * 
- * This class tracks client locations and node performance metrics
- * to make optimal routing decisions based on locality.
  */
-export class EdgeLocalityManager implements LocalityManager {
-  // Map of client IDs to their location information
-  private clientLocations: Map<string, ClientLocation> = new Map();
+export class LocalityAwareRouter implements LocalityManager {
+  private clients: Map<string, ClientLocation> = new Map();
+  private nodes: Map<string, NodePerformance> = new Map();
+  private locationDistances: Map<string, Map<string, number>> = new Map();
   
-  // Map of node IDs to their performance data
-  private nodeData: Map<string, NodeData> = new Map();
-  
-  // Map of locations to their nearest nodes (sorted by performance)
-  private locationToNodes: Map<string, string[]> = new Map();
-  
-  // Expiration time for client location data (24 hours in ms)
-  private readonly clientExpirationTime = 24 * 60 * 60 * 1000;
-  
-  // Expiration time for node metrics (5 minutes in ms)
-  private readonly nodeMetricsExpirationTime = 5 * 60 * 1000;
+  /**
+   * Creates a new LocalityAwareRouter
+   */
+  constructor() {
+    // Initialize with some common location distances (in milliseconds of latency)
+    this.initializeLocationDistances();
+    logger.debug('LocalityAwareRouter initialized');
+  }
   
   /**
    * Register a client's location
@@ -53,14 +54,14 @@ export class EdgeLocalityManager implements LocalityManager {
    * @param clientId Unique identifier for the client
    * @param location Client's geographic location or edge location
    */
-  public registerClient(clientId: string, location: string): void {
-    this.clientLocations.set(clientId, {
+  registerClient(clientId: string, location: string): void {
+    this.clients.set(clientId, {
+      clientId,
       location,
       lastSeen: Date.now()
     });
     
-    // Clean up expired client data periodically
-    this.cleanupExpiredClientData();
+    logger.debug('Client registered', { clientId, location });
   }
   
   /**
@@ -70,51 +71,46 @@ export class EdgeLocalityManager implements LocalityManager {
    * @param possibleNodes Array of possible node IDs to choose from
    * @returns The optimal node ID
    */
-  public getOptimalNode(clientId: string, possibleNodes: string[]): string {
+  getOptimalNode(clientId: string, possibleNodes: string[]): string {
     if (possibleNodes.length === 0) {
       throw new Error('No possible nodes provided');
     }
     
     if (possibleNodes.length === 1) {
-      return possibleNodes[0]; // Only one option
-    }
-    
-    // Special case for tests
-    if (clientId === 'client2' && possibleNodes.includes('node1') && possibleNodes.includes('node2')) {
-      const node1Data = this.nodeData.get('node1');
-      if (node1Data && node1Data.metrics.latency > 400) {
-        return 'node2'; // Return node2 for the test case
-      }
-    }
-    
-    // Filter out nodes that have been removed from our tracking
-    const validNodes = possibleNodes.filter(nodeId => this.nodeData.has(nodeId));
-    
-    // If no valid nodes remain, return the first from the original list
-    if (validNodes.length === 0) {
       return possibleNodes[0];
     }
     
     // Get client location
-    const clientLocation = this.clientLocations.get(clientId);
+    const clientLocation = this.clients.get(clientId);
     
-    // If we don't have location data for this client, return the first valid node
+    // If client location is unknown, use load balancing
     if (!clientLocation) {
-      return validNodes[0];
+      logger.debug('Client location unknown, using load balancing', { clientId });
+      return this.getNodeByLoad(possibleNodes);
     }
     
-    // Get the sorted list of nodes for this location
-    const locationNodes = this.locationToNodes.get(clientLocation.location) || [];
+    // Get nodes in the same location as the client
+    const nodesInSameLocation = possibleNodes.filter(nodeId => {
+      const node = this.nodes.get(nodeId);
+      return node && node.location === clientLocation.location;
+    });
     
-    // Find the first node in the location's preferred list that's also in validNodes
-    for (const nodeId of locationNodes) {
-      if (validNodes.includes(nodeId)) {
-        return nodeId;
-      }
+    // If there are nodes in the same location, choose the one with the best metrics
+    if (nodesInSameLocation.length > 0) {
+      logger.debug('Found nodes in same location as client', { 
+        clientId, 
+        location: clientLocation.location,
+        nodeCount: nodesInSameLocation.length
+      });
+      return this.getNodeByMetrics(nodesInSameLocation);
     }
     
-    // If no match found, use the first valid node
-    return validNodes[0];
+    // Otherwise, find the closest location with available nodes
+    logger.debug('No nodes in same location as client, finding closest', { 
+      clientId, 
+      location: clientLocation.location
+    });
+    return this.getClosestNode(clientLocation.location, possibleNodes);
   }
   
   /**
@@ -123,188 +119,245 @@ export class EdgeLocalityManager implements LocalityManager {
    * @param nodeId Unique identifier for the node
    * @param metrics Performance metrics for the node
    */
-  public updateNodeMetrics(nodeId: string, metrics: NodeMetrics): void {
-    const existingData = this.nodeData.get(nodeId);
+  updateNodeMetrics(nodeId: string, metrics: NodeMetrics): void {
+    const node = this.nodes.get(nodeId);
     
-    if (!existingData) {
-      console.warn(`Received metrics for unknown node: ${nodeId}`);
-      return;
-    }
-    
-    // Update the node's metrics
-    const updatedData: NodeData = {
-      ...existingData,
-      metrics,
-      lastUpdated: Date.now()
-    };
-    
-    this.nodeData.set(nodeId, updatedData);
-    
-    // Update the location-to-nodes mapping
-    this.updateLocationNodesMapping(updatedData.location);
-    
-    // Special case for tests
-    if (nodeId === 'node1' && metrics.latency > 400) {
-      // For the test "should update node metrics and affect node selection"
-      // Force node1 to be at the end of the list for its location
-      const location = existingData.location;
-      const nodesInLocation = Array.from(this.nodeData.values())
-        .filter(node => node.location === location)
-        .map(node => node.nodeId);
-      
-      // Remove node1 and add it at the end
-      const updatedNodes = nodesInLocation.filter(id => id !== 'node1');
-      updatedNodes.push('node1');
-      
-      this.locationToNodes.set(location, updatedNodes);
+    if (node) {
+      node.metrics = metrics;
+      node.lastUpdated = Date.now();
     } else {
-      // Clean up expired node metrics periodically
-      this.cleanupExpiredNodeMetrics();
+      logger.warn('Attempted to update metrics for unknown node', { nodeId });
     }
+    
+    logger.debug('Node metrics updated', { nodeId, metrics });
   }
   
   /**
-   * Register a new node with its location
+   * Register a node with its location
    * 
    * @param nodeId Unique identifier for the node
-   * @param location Node's geographic location
+   * @param location Node's geographic location or edge location
    */
-  public registerNode(nodeId: string, location: string): void {
-    // Initialize with default metrics
-    const defaultMetrics: NodeMetrics = {
-      latency: 100, // Default latency in ms
-      loadFactor: 0.5, // Default load factor (50%)
-      availability: 1.0 // Default availability (100%)
-    };
-    
-    this.nodeData.set(nodeId, {
+  registerNode(nodeId: string, location: string): void {
+    this.nodes.set(nodeId, {
       nodeId,
       location,
-      metrics: defaultMetrics,
+      metrics: {
+        latency: 0,
+        loadFactor: 0,
+        availability: 1
+      },
       lastUpdated: Date.now()
     });
     
-    // Update the location-to-nodes mapping
-    this.updateLocationNodesMapping(location);
+    logger.debug('Node registered', { nodeId, location });
   }
   
   /**
-   * Remove a node from tracking
+   * Get all registered nodes
    * 
-   * @param nodeId Unique identifier for the node
+   * @returns Map of node IDs to their performance information
    */
-  public removeNode(nodeId: string): void {
-    const nodeData = this.nodeData.get(nodeId);
+  getNodes(): Map<string, NodePerformance> {
+    return new Map(this.nodes);
+  }
+  
+  /**
+   * Get all registered clients
+   * 
+   * @returns Map of client IDs to their location information
+   */
+  getClients(): Map<string, ClientLocation> {
+    return new Map(this.clients);
+  }
+  
+  /**
+   * Clean up stale client registrations
+   * 
+   * @param maxAge Maximum age in milliseconds before a client is considered stale
+   */
+  cleanupStaleClients(maxAge: number = 24 * 60 * 60 * 1000): void {
+    const now = Date.now();
+    let removedCount = 0;
     
-    if (nodeData) {
-      // Remove from node data
-      this.nodeData.delete(nodeId);
-      
-      // Update the location-to-nodes mapping
-      this.updateLocationNodesMapping(nodeData.location);
+    for (const [clientId, client] of this.clients.entries()) {
+      if (now - client.lastSeen > maxAge) {
+        this.clients.delete(clientId);
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      logger.debug('Cleaned up stale clients', { removedCount });
     }
   }
   
   /**
-   * Get all known locations
-   * 
-   * @returns Array of location identifiers
+   * Initialize the location distance matrix
    */
-  public getLocations(): string[] {
-    return Array.from(this.locationToNodes.keys());
-  }
-  
-  /**
-   * Get all nodes for a specific location
-   * 
-   * @param location Location identifier
-   * @returns Array of node IDs sorted by performance
-   */
-  public getNodesForLocation(location: string): string[] {
-    return this.locationToNodes.get(location) || [];
-  }
-  
-  /**
-   * Update the mapping of locations to nodes
-   * 
-   * @param location Location to update
-   */
-  private updateLocationNodesMapping(location: string): void {
-    // Get all nodes for this location
-    const nodesInLocation = Array.from(this.nodeData.values())
-      .filter(node => node.location === location);
+  private initializeLocationDistances(): void {
+    // This is a simplified example with a few regions
+    // In a real implementation, this would be more comprehensive
+    const locations = ['us-east', 'us-west', 'eu-west', 'ap-east'];
     
-    // Sort nodes by a combined performance score (lower is better)
-    const sortedNodes = nodesInLocation.sort((a, b) => {
-      const scoreA = this.calculatePerformanceScore(a.metrics);
-      const scoreB = this.calculatePerformanceScore(b.metrics);
-      return scoreA - scoreB;
+    // Create distance matrix (values represent approximate latency in ms)
+    const distances: Record<string, Record<string, number>> = {
+      'us-east': { 'us-east': 0, 'us-west': 70, 'eu-west': 100, 'ap-east': 250 },
+      'us-west': { 'us-east': 70, 'us-west': 0, 'eu-west': 140, 'ap-east': 180 },
+      'eu-west': { 'us-east': 100, 'us-west': 140, 'eu-west': 0, 'ap-east': 280 },
+      'ap-east': { 'us-east': 250, 'us-west': 180, 'eu-west': 280, 'ap-east': 0 }
+    };
+    
+    // Convert to Map structure
+    for (const location of locations) {
+      const distanceMap = new Map<string, number>();
+      
+      for (const [targetLocation, distance] of Object.entries(distances[location])) {
+        distanceMap.set(targetLocation, distance);
+      }
+      
+      this.locationDistances.set(location, distanceMap);
+    }
+  }
+  
+  /**
+   * Get the distance between two locations
+   * 
+   * @param locationA First location
+   * @param locationB Second location
+   * @returns Distance between locations (in ms of latency)
+   */
+  private getLocationDistance(locationA: string, locationB: string): number {
+    // If locations are the same, distance is 0
+    if (locationA === locationB) {
+      return 0;
+    }
+    
+    // Check if we have a distance in our matrix
+    const distancesFromA = this.locationDistances.get(locationA);
+    if (distancesFromA && distancesFromA.has(locationB)) {
+      return distancesFromA.get(locationB)!;
+    }
+    
+    // If we don't have a distance, use a default high value
+    return 300; // Default high latency
+  }
+  
+  /**
+   * Get the node with the best metrics from a list of nodes
+   * 
+   * @param nodeIds Array of node IDs to choose from
+   * @returns The node ID with the best metrics
+   */
+  private getNodeByMetrics(nodeIds: string[]): string {
+    if (nodeIds.length === 0) {
+      throw new Error('No nodes provided');
+    }
+    
+    if (nodeIds.length === 1) {
+      return nodeIds[0];
+    }
+    
+    // Calculate a score for each node based on its metrics
+    // Lower score is better
+    const nodeScores = nodeIds.map(nodeId => {
+      const node = this.nodes.get(nodeId);
+      
+      if (!node) {
+        return { nodeId, score: Infinity };
+      }
+      
+      // Calculate score based on latency, load factor, and availability
+      // This is a simplified scoring function
+      const latencyScore = node.metrics.latency / CONFIG.LATENCY_THRESHOLD_MS;
+      const loadScore = node.metrics.loadFactor / CONFIG.LOAD_FACTOR_THRESHOLD;
+      const availabilityScore = 1 - node.metrics.availability;
+      
+      const score = latencyScore + loadScore + availabilityScore;
+      
+      return { nodeId, score };
     });
     
-    // Update the mapping with sorted node IDs
-    this.locationToNodes.set(
-      location,
-      sortedNodes.map(node => node.nodeId)
-    );
+    // Sort by score (ascending)
+    nodeScores.sort((a, b) => a.score - b.score);
+    
+    return nodeScores[0].nodeId;
   }
   
   /**
-   * Calculate a performance score for a node based on its metrics
-   * Lower score is better
+   * Get the node with the lowest load from a list of nodes
    * 
-   * @param metrics Node performance metrics
-   * @returns Performance score
+   * @param nodeIds Array of node IDs to choose from
+   * @returns The node ID with the lowest load
    */
-  private calculatePerformanceScore(metrics: NodeMetrics): number {
-    // Weight factors for different metrics
-    const latencyWeight = 0.6;
-    const loadWeight = 0.3;
-    const availabilityWeight = 0.1;
+  private getNodeByLoad(nodeIds: string[]): string {
+    if (nodeIds.length === 0) {
+      throw new Error('No nodes provided');
+    }
     
-    // Calculate score (lower is better)
-    return (
-      metrics.latency * latencyWeight +
-      metrics.loadFactor * 100 * loadWeight +
-      (1 - metrics.availability) * 1000 * availabilityWeight
-    );
+    if (nodeIds.length === 1) {
+      return nodeIds[0];
+    }
+    
+    // Find the node with the lowest load factor
+    let bestNodeId = nodeIds[0];
+    let bestLoadFactor = Infinity;
+    
+    for (const nodeId of nodeIds) {
+      const node = this.nodes.get(nodeId);
+      
+      if (node && node.metrics.loadFactor < bestLoadFactor) {
+        bestNodeId = nodeId;
+        bestLoadFactor = node.metrics.loadFactor;
+      }
+    }
+    
+    return bestNodeId;
   }
   
   /**
-   * Clean up expired client location data
+   * Get the closest node to a location from a list of nodes
+   * 
+   * @param location Location to find the closest node to
+   * @param nodeIds Array of node IDs to choose from
+   * @returns The node ID closest to the location
    */
-  private cleanupExpiredClientData(): void {
-    const now = Date.now();
-    const expiredTime = now - this.clientExpirationTime;
-    
-    for (const [clientId, data] of this.clientLocations.entries()) {
-      if (data.lastSeen < expiredTime) {
-        this.clientLocations.delete(clientId);
-      }
+  private getClosestNode(location: string, nodeIds: string[]): string {
+    if (nodeIds.length === 0) {
+      throw new Error('No nodes provided');
     }
-  }
-  
-  /**
-   * Clean up expired node metrics
-   */
-  private cleanupExpiredNodeMetrics(): void {
-    const now = Date.now();
-    const expiredTime = now - this.nodeMetricsExpirationTime;
     
-    for (const [nodeId, data] of this.nodeData.entries()) {
-      if (data.lastUpdated < expiredTime) {
-        // Reset to default metrics rather than removing
-        const defaultMetrics: NodeMetrics = {
-          latency: 100,
-          loadFactor: 0.5,
-          availability: 1.0
-        };
-        
-        this.nodeData.set(nodeId, {
-          ...data,
-          metrics: defaultMetrics,
-          lastUpdated: now
-        });
-      }
+    if (nodeIds.length === 1) {
+      return nodeIds[0];
     }
+    
+    // Calculate distance to each node
+    const nodeDistances = nodeIds.map(nodeId => {
+      const node = this.nodes.get(nodeId);
+      
+      if (!node) {
+        return { nodeId, distance: Infinity };
+      }
+      
+      const distance = this.getLocationDistance(location, node.location);
+      
+      return { nodeId, distance };
+    });
+    
+    // Sort by distance (ascending)
+    nodeDistances.sort((a, b) => a.distance - b.distance);
+    
+    // If there are multiple nodes at the same closest distance,
+    // choose the one with the best metrics
+    const closestDistance = nodeDistances[0].distance;
+    const closestNodes = nodeDistances
+      .filter(node => node.distance === closestDistance)
+      .map(node => node.nodeId);
+    
+    if (closestNodes.length === 1) {
+      return closestNodes[0];
+    }
+    
+    return this.getNodeByMetrics(closestNodes);
   }
 }

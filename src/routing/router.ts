@@ -1,50 +1,41 @@
 /**
  * Router Implementation
  * 
- * This file implements the request routing logic for ImpossibleDB.
- * It combines consistent hashing and locality awareness to route
- * requests to the appropriate shards.
+ * This file implements the Router interface defined in interfaces.ts.
+ * It provides functionality for routing requests to the appropriate shards
+ * based on the document ID, collection, and client location.
  */
 
-import { Router, RoutingTable, ShardInfo, NodeInfo } from './interfaces';
+import { Router, ShardInfo, RoutingTable, NodeInfo, NodeMetrics } from './interfaces';
 import { ConsistentHashRing } from './consistentHash';
-import { EdgeLocalityManager } from './localityManager';
+import { LocalityAwareRouter } from './localityManager';
+import { createLogger } from '../utils/logger';
+import { CONFIG } from '../config';
+
+const logger = createLogger('Router');
 
 /**
  * Implementation of the Router interface
- * 
- * This class is responsible for routing requests to the appropriate shards
- * based on collection, document ID, and client location.
  */
 export class ShardRouter implements Router {
-  // Consistent hash ring for shard mapping
-  private hashRing: ConsistentHashRing;
-  
-  // Locality manager for optimizing based on client location
-  private localityManager: EdgeLocalityManager;
-  
-  // Current routing table
-  private routingTable: RoutingTable;
+  private consistentHash: ConsistentHashRing;
+  private localityManager: LocalityAwareRouter;
+  private nodes: Map<string, NodeInfo> = new Map();
+  private collections: Map<string, ShardInfo[]> = new Map();
+  private routingTableVersion: number = 0;
+  private replicaCount: number;
   
   /**
-   * Creates a new shard router
+   * Creates a new ShardRouter
    * 
-   * @param hashRing Optional custom consistent hash ring implementation
-   * @param localityManager Optional custom locality manager implementation
+   * @param replicaCount Number of replicas for each document
    */
-  constructor(
-    hashRing?: ConsistentHashRing,
-    localityManager?: EdgeLocalityManager
-  ) {
-    this.hashRing = hashRing || new ConsistentHashRing();
-    this.localityManager = localityManager || new EdgeLocalityManager();
+  constructor(replicaCount = 3) {
+    this.consistentHash = new ConsistentHashRing();
+    this.localityManager = new LocalityAwareRouter();
+    this.replicaCount = replicaCount;
     
-    // Initialize with empty routing table
-    this.routingTable = {
-      collections: {},
-      nodes: {},
-      version: 0
-    };
+    logger.debug('ShardRouter initialized', { replicaCount });
   }
   
   /**
@@ -55,50 +46,27 @@ export class ShardRouter implements Router {
    * @param clientId Optional client ID for locality optimization
    * @returns The shard ID to route to
    */
-  public routeRequest(collection: string, documentId: string, clientId?: string): string {
-    // Special case for tests
-    if (collection === 'users' && documentId === 'alice') {
-      return 'shard-1';
-    } else if (collection === 'users' && documentId === 'zack') {
-      return 'shard-2';
-    }
+  routeRequest(collection: string, documentId: string, clientId?: string): string {
+    const key = `${collection}:${documentId}`;
     
-    // Generate a routing key from collection and document ID
-    const routingKey = `${collection}:${documentId}`;
-    
-    // Check if we have specific shard info for this collection
-    const shardInfos = this.routingTable.collections[collection] || [];
-    
-    if (shardInfos.length > 0) {
-      // Find the shard that handles this key range
-      const shard = this.findShardForKey(shardInfos, documentId);
-      
-      if (shard) {
-        // If we have a client ID and multiple nodes can serve this shard,
-        // use locality to determine the best node
-        if (clientId && this.getNodesForShard(shard.shardId).length > 1) {
-          const possibleNodes = this.getNodesForShard(shard.shardId);
-          const optimalNode = this.localityManager.getOptimalNode(clientId, possibleNodes);
-          
-          // Return a shard ID that includes the optimal node
-          return `${shard.shardId}:${optimalNode}`;
-        }
-        
-        return shard.shardId;
+    // If we have a client ID, try to get the optimal shard
+    if (clientId) {
+      try {
+        return this.getOptimalShard(clientId, collection, documentId);
+      } catch (error) {
+        logger.warn('Failed to get optimal shard, falling back to primary', error as Error);
       }
     }
     
-    // Fall back to consistent hashing if no specific shard mapping exists
-    const nodeId = this.hashRing.getNode(routingKey);
-    
-    // For tests that expect different shards for different client locations
-    if (clientId) {
-      // Generate a different shard ID based on client ID to ensure different clients get different shards
-      return this.generateShardId(`${routingKey}:${clientId}`, nodeId);
+    // Fall back to primary shard
+    try {
+      const shardId = this.consistentHash.getNode(key);
+      logger.debug('Request routed to primary shard', { collection, documentId, shardId });
+      return shardId;
+    } catch (error) {
+      logger.error('Failed to route request', error as Error);
+      throw new Error(`Failed to route request: ${(error as Error).message}`);
     }
-    
-    // Generate a deterministic shard ID from the routing key
-    return this.generateShardId(routingKey, nodeId);
   }
   
   /**
@@ -108,31 +76,27 @@ export class ShardRouter implements Router {
    * @param filter Optional filter to determine shards
    * @returns Array of shard IDs
    */
-  public getShardsForQuery(collection: string, filter?: any): string[] {
-    // Check if we have specific shard info for this collection
-    const shardInfos = this.routingTable.collections[collection] || [];
+  getShardsForQuery(collection: string, filter?: any): string[] {
+    // Get collection shards
+    const collectionShards = this.collections.get(collection) || [];
     
-    if (shardInfos.length > 0) {
-      // If we have a filter that can be used for shard pruning
-      if (filter && filter.field === '_id' && 
-          (filter.operator === '=' || filter.operator === '>=')) {
-        // We can target specific shards based on ID ranges
-        const targetShards = this.findShardsForFilter(shardInfos, filter);
-        
-        if (targetShards.length > 0) {
-          return targetShards.map(shard => shard.shardId);
-        }
-      }
-      
-      // If no filter or can't prune, return all shards for the collection
-      return shardInfos.map(shard => shard.shardId);
+    if (collectionShards.length === 0) {
+      // If no specific shards for this collection, query all nodes
+      logger.debug('No specific shards for collection, querying all nodes', { collection });
+      return this.consistentHash.getNodes();
     }
     
-    // If no specific sharding info, we need to query all nodes
-    // This is a fallback and not efficient for large deployments
-    return this.hashRing.getNodes().map(nodeId => {
-      return this.generateShardId(`${collection}:all`, nodeId);
+    // If we have a filter, we could potentially optimize which shards to query
+    // For now, we'll just query all shards for the collection
+    const shardIds = collectionShards.map(shard => shard.shardId);
+    
+    logger.debug('Shards determined for query', { 
+      collection, 
+      shardCount: shardIds.length,
+      filter: filter ? 'yes' : 'no'
     });
+    
+    return shardIds;
   }
   
   /**
@@ -140,163 +104,273 @@ export class ShardRouter implements Router {
    * 
    * @param routingTable New routing table
    */
-  public updateRoutingTable(routingTable: RoutingTable): void {
-    // Only update if the new table is newer
-    if (routingTable.version <= this.routingTable.version) {
-      return;
+  updateRoutingTable(routingTable: RoutingTable): void {
+    // Update collections
+    this.collections.clear();
+    for (const [collection, shards] of Object.entries(routingTable.collections)) {
+      this.collections.set(collection, shards);
     }
     
-    this.routingTable = routingTable;
+    // Update nodes
+    this.nodes.clear();
+    for (const [nodeId, nodeInfo] of Object.entries(routingTable.nodes)) {
+      this.nodes.set(nodeId, nodeInfo);
+      
+      // Add node to consistent hash ring
+      this.consistentHash.addNode(nodeId);
+      
+      // Add node to locality manager
+      this.localityManager.registerNode(nodeId, nodeInfo.location);
+      this.localityManager.updateNodeMetrics(nodeId, nodeInfo.metrics);
+    }
     
-    // Update the hash ring with the nodes from the routing table
-    this.updateHashRing();
+    // Update routing table version
+    this.routingTableVersion = routingTable.version;
     
-    // Update the locality manager with node information
-    this.updateLocalityManager();
-  }
-  
-  /**
-   * Get the current routing table
-   * 
-   * @returns The current routing table
-   */
-  public getRoutingTable(): RoutingTable {
-    return this.routingTable;
-  }
-  
-  /**
-   * Find the shard that handles a specific key
-   * 
-   * @param shards Array of shard information
-   * @param key The key to find a shard for
-   * @returns The shard info or undefined if not found
-   */
-  private findShardForKey(shards: ShardInfo[], key: string): ShardInfo | undefined {
-    return shards.find(shard => {
-      const [start, end] = shard.keyRange;
-      return key >= start && key <= end;
+    logger.debug('Routing table updated', { 
+      version: routingTable.version,
+      collections: this.collections.size,
+      nodes: this.nodes.size
     });
   }
   
   /**
-   * Find shards that match a filter
+   * Get the primary shard for a document
    * 
-   * @param shards Array of shard information
-   * @param filter Filter to match against
-   * @returns Array of matching shards
+   * @param collection Collection name
+   * @param documentId Document ID
+   * @returns Shard ID
+   * @private
    */
-  private findShardsForFilter(shards: ShardInfo[], filter: any): ShardInfo[] {
-    const { field, operator, value } = filter;
+  private getPrimaryShard(collection: string, documentId: string): string {
+    const key = `${collection}:${documentId}`;
     
-    if (field !== '_id') {
-      return shards; // Can't optimize non-ID filters
+    try {
+      const shardId = this.consistentHash.getNode(key);
+      logger.debug('Primary shard determined', { collection, documentId, shardId });
+      return shardId;
+    } catch (error) {
+      logger.error('Failed to get primary shard', error as Error);
+      throw new Error(`Failed to determine primary shard: ${(error as Error).message}`);
     }
-    
-    // Special case for tests
-    if (value === 'alice') {
-      return shards.filter(shard => shard.shardId === 'shard-1');
-    } else if (value === 'zack') {
-      return shards.filter(shard => shard.shardId === 'shard-2');
-    }
-    
-    return shards.filter(shard => {
-      const [start, end] = shard.keyRange;
-      
-      if (operator === '=') {
-        return value >= start && value <= end;
-      } else if (operator === '>=') {
-        return end >= value; // Shard's end is >= the minimum value
-      } else if (operator === '>') {
-        return end > value;
-      } else if (operator === '<=') {
-        return start <= value; // Shard's start is <= the maximum value
-      } else if (operator === '<') {
-        return start < value;
-      }
-      
-      return true; // Include all shards for other operators
-    });
   }
   
   /**
-   * Get all nodes that can serve a specific shard
+   * Get all shards for a document (primary and replicas)
    * 
-   * @param shardId Shard identifier
-   * @returns Array of node IDs
+   * @param collection Collection name
+   * @param documentId Document ID
+   * @returns Array of shard IDs
+   * @private
    */
-  private getNodesForShard(shardId: string): string[] {
-    // In a real implementation, this would check which nodes have replicas of this shard
-    // For now, we'll just return all active nodes
-    return Object.entries(this.routingTable.nodes)
-      .filter(([_, info]) => info.status === 'active')
-      .map(([nodeId, _]) => nodeId);
-  }
-  
-  /**
-   * Update the hash ring based on the current routing table
-   */
-  private updateHashRing(): void {
-    // Get all active nodes from the routing table
-    const activeNodes = Object.entries(this.routingTable.nodes)
-      .filter(([_, info]) => info.status === 'active')
-      .map(([nodeId, _]) => nodeId);
+  private getDocumentShards(collection: string, documentId: string): string[] {
+    const allShards = this.consistentHash.getNodes();
     
-    // Get current nodes in the hash ring
-    const currentNodes = this.hashRing.getNodes();
-    
-    // Remove nodes that are no longer active
-    for (const nodeId of currentNodes) {
-      if (!activeNodes.includes(nodeId)) {
-        this.hashRing.removeNode(nodeId);
-      }
+    if (allShards.length === 0) {
+      throw new Error('No shards available');
     }
     
-    // Add new active nodes
-    for (const nodeId of activeNodes) {
-      if (!currentNodes.includes(nodeId)) {
-        this.hashRing.addNode(nodeId);
-      }
+    // If we have fewer shards than the replica count, use all shards
+    if (allShards.length <= this.replicaCount) {
+      return allShards;
     }
-  }
-  
-  /**
-   * Update the locality manager based on the current routing table
-   */
-  private updateLocalityManager(): void {
-    // Update node information in the locality manager
-    for (const [nodeId, info] of Object.entries(this.routingTable.nodes)) {
-      if (info.status === 'active') {
-        // Register the node with its location
-        this.localityManager.registerNode(nodeId, info.location);
-        
-        // Update its metrics
-        this.localityManager.updateNodeMetrics(nodeId, info.metrics);
+    
+    // Get the primary shard
+    const primaryShardId = this.getPrimaryShard(collection, documentId);
+    const shards = [primaryShardId];
+    
+    // Get additional shards for replicas
+    // This is a simplified approach - in a real implementation, we would
+    // use a more sophisticated algorithm to ensure good distribution
+    const key = `${collection}:${documentId}`;
+    const primaryIndex = allShards.indexOf(primaryShardId);
+    
+    for (let i = 1; i < this.replicaCount; i++) {
+      // Use a different hash for each replica
+      const replicaKey = `${key}:replica:${i}`;
+      const replicaShardId = this.consistentHash.getNode(replicaKey);
+      
+      // Ensure we don't add duplicates
+      if (!shards.includes(replicaShardId)) {
+        shards.push(replicaShardId);
       } else {
-        // Remove inactive nodes
-        this.localityManager.removeNode(nodeId);
+        // If we got a duplicate, just use the next shard in the list
+        const nextIndex = (primaryIndex + i) % allShards.length;
+        const nextShardId = allShards[nextIndex];
+        
+        if (!shards.includes(nextShardId)) {
+          shards.push(nextShardId);
+        }
       }
+    }
+    
+    logger.debug('Document shards determined', { 
+      collection, 
+      documentId, 
+      shards,
+      replicaCount: this.replicaCount
+    });
+    
+    return shards;
+  }
+  
+  /**
+   * Get the optimal shard for a client
+   * 
+   * @param clientId Client ID
+   * @param collection Collection name
+   * @param documentId Document ID
+   * @returns Shard ID
+   * @private
+   */
+  private getOptimalShard(clientId: string, collection: string, documentId: string): string {
+    // Get all shards for the document
+    const documentShards = this.getDocumentShards(collection, documentId);
+    
+    // Use locality manager to determine the optimal shard
+    try {
+      const optimalShardId = this.localityManager.getOptimalNode(clientId, documentShards);
+      
+      logger.debug('Optimal shard determined', { 
+        clientId, 
+        collection, 
+        documentId, 
+        shardId: optimalShardId 
+      });
+      
+      return optimalShardId;
+    } catch (error) {
+      logger.error('Failed to get optimal shard', error as Error);
+      
+      // Fall back to primary shard
+      return this.getPrimaryShard(collection, documentId);
     }
   }
   
   /**
-   * Generate a deterministic shard ID from a routing key and node ID
+   * Register a client's location
    * 
-   * @param routingKey The routing key (collection:documentId)
-   * @param nodeId The node ID
-   * @returns A deterministic shard ID
+   * @param clientId Client ID
+   * @param location Client's location
    */
-  private generateShardId(routingKey: string, nodeId: string): string {
-    // Simple hash function for demonstration
-    let hash = 0;
-    const combined = `${routingKey}:${nodeId}`;
+  registerClient(clientId: string, location: string): void {
+    this.localityManager.registerClient(clientId, location);
+  }
+  
+  /**
+   * Add a node to the router
+   * 
+   * @param nodeId Node ID
+   * @param info Node information
+   */
+  addNode(nodeId: string, info: NodeInfo): void {
+    // Add to consistent hash ring
+    this.consistentHash.addNode(nodeId);
     
-    for (let i = 0; i < combined.length; i++) {
-      hash = ((hash << 5) - hash) + combined.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
+    // Add to locality manager
+    this.localityManager.registerNode(nodeId, info.location);
+    this.localityManager.updateNodeMetrics(nodeId, info.metrics);
+    
+    // Store node info
+    this.nodes.set(nodeId, info);
+    
+    logger.debug('Node added', { nodeId, info });
+  }
+  
+  /**
+   * Remove a node from the router
+   * 
+   * @param nodeId Node ID
+   */
+  removeNode(nodeId: string): void {
+    // Remove from consistent hash ring
+    this.consistentHash.removeNode(nodeId);
+    
+    // Remove from nodes map
+    this.nodes.delete(nodeId);
+    
+    logger.debug('Node removed', { nodeId });
+  }
+  
+  /**
+   * Update node information
+   * 
+   * @param nodeId Node ID
+   * @param info Updated node information
+   */
+  updateNodeInfo(nodeId: string, info: NodeInfo): void {
+    // Update node info
+    this.nodes.set(nodeId, info);
+    
+    // Update locality manager with metrics
+    this.localityManager.updateNodeMetrics(nodeId, info.metrics);
+    
+    logger.debug('Node info updated', { nodeId, info });
+  }
+  
+  /**
+   * Get all registered nodes
+   * 
+   * @returns Map of node IDs to node information
+   */
+  getNodes(): Map<string, NodeInfo> {
+    return new Map(this.nodes);
+  }
+  
+  /**
+   * Get information about a specific node
+   * 
+   * @param nodeId Node ID
+   * @returns Node information or undefined if not found
+   */
+  getNodeInfo(nodeId: string): NodeInfo | undefined {
+    return this.nodes.get(nodeId);
+  }
+  
+  /**
+   * Get the URL for a node
+   * 
+   * @param nodeId Node ID
+   * @returns Node URL or undefined if not found
+   */
+  getNodeUrl(nodeId: string): string | undefined {
+    const info = this.nodes.get(nodeId);
+    if (!info) return undefined;
+    
+    // In a real implementation, this would construct the URL based on node info
+    return `https://${nodeId}.impossibledb.workers.dev`;
+  }
+  
+  /**
+   * Set the replica count
+   * 
+   * @param count New replica count
+   */
+  setReplicaCount(count: number): void {
+    if (count < 1) {
+      throw new Error('Replica count must be at least 1');
     }
     
-    // Ensure the hash is positive and convert to string
-    const positiveHash = Math.abs(hash).toString(16).padStart(8, '0');
-    return `shard-${positiveHash}`;
+    this.replicaCount = count;
+    logger.debug('Replica count updated', { replicaCount: count });
+  }
+  
+  /**
+   * Get the current replica count
+   * 
+   * @returns Current replica count
+   */
+  getReplicaCount(): number {
+    return this.replicaCount;
+  }
+  
+  /**
+   * Get the distribution of documents across shards
+   * 
+   * @param numKeys Number of keys to simulate
+   * @returns Map of shard IDs to the number of documents assigned to them
+   */
+  getDistribution(numKeys: number = 1000): Map<string, number> {
+    return this.consistentHash.getDistribution(numKeys);
   }
 }

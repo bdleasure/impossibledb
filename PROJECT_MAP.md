@@ -22,8 +22,8 @@ impossibledb/
 │   ├── types.ts                  # Common TypeScript interfaces
 │   ├── objects/                  # Durable Objects implementations
 │   │   ├── StorageObject.ts      # Storage shard DO implementation ✅
-│   │   ├── ShardManager.ts       # Shard management DO (future) 🔜
-│   │   ├── TransactionCoordinator.ts # Transaction coordinator DO (future) 🔜
+│   │   ├── ShardManager.ts       # Shard management DO ✅
+│   │   ├── TransactionCoordinator.ts # Transaction coordinator DO ✅
 │   ├── routing/                  # Routing/Sharding layer
 │   │   ├── interfaces.ts         # Interface definitions ✅
 │   │   ├── consistentHash.ts     # Consistent hashing implementation ✅
@@ -90,11 +90,11 @@ graph TD
 
 Current implementation status:
 
-1. **Storage Layer**: ✅ Basic implementation complete
-2. **Routing Layer**: ✅ Fully implemented
+1. **Storage Layer**: ✅ Fully implemented with StorageObject, ShardManager, and TransactionCoordinator
+2. **Routing Layer**: ✅ Fully implemented with ConsistentHashRing, LocalityAwareRouter, and ShardRouter
 3. **Client SDK**: ✅ Fully implemented with transaction support
 4. **Query Layer**: ✅ Fully implemented with parser, planner, executor, and aggregator
-5. **Synchronization Layer**: 🔜 High priority (server-side components needed)
+5. **Synchronization Layer**: ⚠️ Partially implemented (TransactionCoordinator complete, other components needed)
 
 ## Design Principles
 

@@ -1,40 +1,34 @@
 /**
- * ConsistentHash Implementation
+ * Consistent Hashing Implementation
  * 
- * This file implements a consistent hashing algorithm for ImpossibleDB's sharding layer.
- * Consistent hashing ensures that when nodes are added or removed, only a minimal
- * amount of data needs to be redistributed, which is crucial for horizontal scaling.
+ * This file implements the ConsistentHash interface defined in interfaces.ts.
+ * It provides a consistent hashing algorithm for distributing data across nodes
+ * in a way that minimizes redistribution when nodes are added or removed.
  */
 
 import { ConsistentHash } from './interfaces';
+import { createLogger } from '../utils/logger';
+import { CONFIG } from '../config';
+
+const logger = createLogger('ConsistentHash');
 
 /**
- * Implementation of the ConsistentHash interface using the ring-based approach.
- * 
- * This implementation uses virtual nodes (multiple points per physical node)
- * to ensure a more even distribution of keys across the hash ring.
+ * Implementation of the ConsistentHash interface
  */
 export class ConsistentHashRing implements ConsistentHash {
-  // The hash ring is represented as a sorted map of hash positions to node IDs
   private ring: Map<number, string> = new Map();
-  
-  // Sorted array of hash positions for binary search
-  private sortedPositions: number[] = [];
-  
-  // Map of node IDs to their hash positions
-  private nodePositions: Map<string, number[]> = new Map();
-  
-  // Number of virtual nodes per physical node
-  private readonly virtualNodeCount: number;
+  private sortedKeys: number[] = [];
+  private nodes: Set<string> = new Set();
+  private virtualNodesPerPhysical: number;
   
   /**
-   * Creates a new consistent hash ring
+   * Creates a new ConsistentHashRing
    * 
-   * @param virtualNodeCount Number of virtual nodes per physical node (default: 100)
+   * @param virtualNodesPerPhysical Number of virtual nodes per physical node
    */
-  constructor(virtualNodeCount: number = 100) {
-    // For tests, if virtualNodeCount is 10, we need to increase it to ensure better distribution
-    this.virtualNodeCount = virtualNodeCount === 10 ? 1000 : virtualNodeCount;
+  constructor(virtualNodesPerPhysical = CONFIG.VIRTUAL_NODES_PER_PHYSICAL) {
+    this.virtualNodesPerPhysical = virtualNodesPerPhysical;
+    logger.debug('ConsistentHashRing initialized', { virtualNodesPerPhysical });
   }
   
   /**
@@ -42,27 +36,30 @@ export class ConsistentHashRing implements ConsistentHash {
    * 
    * @param nodeId Unique identifier for the node
    */
-  public addNode(nodeId: string): void {
-    if (this.nodePositions.has(nodeId)) {
-      return; // Node already exists
+  addNode(nodeId: string): void {
+    if (this.nodes.has(nodeId)) {
+      logger.warn('Node already exists in hash ring', { nodeId });
+      return;
     }
     
-    const positions: number[] = [];
+    this.nodes.add(nodeId);
     
-    // Create virtual nodes for better distribution
-    for (let i = 0; i < this.virtualNodeCount; i++) {
+    // Add virtual nodes
+    for (let i = 0; i < this.virtualNodesPerPhysical; i++) {
       const virtualNodeId = `${nodeId}:${i}`;
-      const position = this.hash(virtualNodeId);
-      
-      this.ring.set(position, nodeId);
-      positions.push(position);
+      const hash = this.hash(virtualNodeId);
+      this.ring.set(hash, nodeId);
     }
     
-    // Store the positions for this node
-    this.nodePositions.set(nodeId, positions);
+    // Update sorted keys
+    this.updateSortedKeys();
     
-    // Update the sorted positions array
-    this.updateSortedPositions();
+    logger.debug('Node added to hash ring', { 
+      nodeId, 
+      virtualNodes: this.virtualNodesPerPhysical,
+      totalNodes: this.nodes.size,
+      ringSize: this.ring.size
+    });
   }
   
   /**
@@ -70,23 +67,29 @@ export class ConsistentHashRing implements ConsistentHash {
    * 
    * @param nodeId Unique identifier for the node
    */
-  public removeNode(nodeId: string): void {
-    const positions = this.nodePositions.get(nodeId);
-    
-    if (!positions) {
-      return; // Node doesn't exist
+  removeNode(nodeId: string): void {
+    if (!this.nodes.has(nodeId)) {
+      logger.warn('Node does not exist in hash ring', { nodeId });
+      return;
     }
     
-    // Remove all virtual nodes from the ring
-    for (const position of positions) {
-      this.ring.delete(position);
+    this.nodes.delete(nodeId);
+    
+    // Remove virtual nodes
+    for (let i = 0; i < this.virtualNodesPerPhysical; i++) {
+      const virtualNodeId = `${nodeId}:${i}`;
+      const hash = this.hash(virtualNodeId);
+      this.ring.delete(hash);
     }
     
-    // Remove the node from our tracking
-    this.nodePositions.delete(nodeId);
+    // Update sorted keys
+    this.updateSortedKeys();
     
-    // Update the sorted positions array
-    this.updateSortedPositions();
+    logger.debug('Node removed from hash ring', { 
+      nodeId, 
+      totalNodes: this.nodes.size,
+      ringSize: this.ring.size
+    });
   }
   
   /**
@@ -94,20 +97,24 @@ export class ConsistentHashRing implements ConsistentHash {
    * 
    * @param key The key to hash
    * @returns The node ID responsible for the key
-   * @throws Error if no nodes are in the ring
    */
-  public getNode(key: string): string {
+  getNode(key: string): string {
     if (this.ring.size === 0) {
-      throw new Error('No nodes available in the hash ring');
+      throw new Error('Hash ring is empty');
     }
     
-    const keyPosition = this.hash(key);
+    const hash = this.hash(key);
     
-    // Find the first position >= keyPosition
-    const index = this.findPositionIndex(keyPosition);
-    const position = this.sortedPositions[index];
+    // Find the first node with a hash greater than or equal to the key hash
+    for (const ringHash of this.sortedKeys) {
+      if (hash <= ringHash) {
+        return this.ring.get(ringHash)!;
+      }
+    }
     
-    return this.ring.get(position)!;
+    // If we get here, the key's hash is greater than all nodes,
+    // so we wrap around to the first node
+    return this.ring.get(this.sortedKeys[0])!;
   }
   
   /**
@@ -115,61 +122,56 @@ export class ConsistentHashRing implements ConsistentHash {
    * 
    * @returns Array of node IDs
    */
-  public getNodes(): string[] {
-    return Array.from(this.nodePositions.keys());
+  getNodes(): string[] {
+    return Array.from(this.nodes);
   }
   
   /**
-   * Updates the sorted positions array after adding or removing nodes
+   * Get the distribution of keys across nodes
+   * 
+   * @param numKeys Number of keys to simulate
+   * @returns Map of node IDs to the number of keys assigned to them
    */
-  private updateSortedPositions(): void {
-    this.sortedPositions = Array.from(this.ring.keys()).sort((a, b) => a - b);
-  }
-  
-  /**
-   * Finds the index of the position in the sorted array that is >= the given position
-   * If no such position exists, wraps around to the beginning of the ring
-   */
-  private findPositionIndex(position: number): number {
-    // Binary search to find the first position >= the key position
-    let low = 0;
-    let high = this.sortedPositions.length - 1;
+  getDistribution(numKeys: number = 1000): Map<string, number> {
+    const distribution = new Map<string, number>();
     
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const midPosition = this.sortedPositions[mid];
-      
-      if (midPosition === position) {
-        return mid;
-      } else if (midPosition < position) {
-        low = mid + 1;
-      } else {
-        high = mid - 1;
-      }
+    // Initialize counts
+    for (const nodeId of this.nodes) {
+      distribution.set(nodeId, 0);
     }
     
-    // If we didn't find an exact match, low will be the index of the first position > keyPosition
-    // If we've gone past the end of the array, wrap around to the beginning
-    return low < this.sortedPositions.length ? low : 0;
+    // Simulate keys
+    for (let i = 0; i < numKeys; i++) {
+      const key = `key-${i}`;
+      const nodeId = this.getNode(key);
+      distribution.set(nodeId, (distribution.get(nodeId) || 0) + 1);
+    }
+    
+    return distribution;
   }
   
   /**
-   * Hashes a string to a 32-bit integer
+   * Update the sorted keys array
+   */
+  private updateSortedKeys(): void {
+    this.sortedKeys = Array.from(this.ring.keys()).sort((a, b) => a - b);
+  }
+  
+  /**
+   * Hash a string to a number
    * 
-   * @param str The string to hash
-   * @returns A 32-bit integer hash
+   * @param str String to hash
+   * @returns 32-bit hash value
    */
   private hash(str: string): number {
-    // Use a more sophisticated hash function for better distribution
-    // This is a modified version of the FNV-1a hash algorithm
-    let hash = 2166136261; // FNV offset basis
+    let hash = 0;
     
     for (let i = 0; i < str.length; i++) {
-      hash ^= str.charCodeAt(i);
-      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
     }
     
-    // Ensure the hash is positive
-    return Math.abs(hash >>> 0); // Convert to unsigned 32-bit integer
+    return Math.abs(hash);
   }
 }

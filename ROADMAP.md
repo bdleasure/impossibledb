@@ -20,8 +20,8 @@ ImpossibleDB is now production-ready with all core components implemented and te
 - [x] Build the result aggregator in `src/query/aggregator.ts`
 - [x] Add support for complex queries across multiple shards
 
-### 2. Transaction Support (Partially Completed)
-- [ ] Implement the transaction coordinator in `src/objects/TransactionCoordinator.ts`
+### 2. Transaction Support (Mostly Completed)
+- [x] Implement the transaction coordinator in `src/objects/TransactionCoordinator.ts`
 - [ ] Develop two-phase commit protocol in `src/sync/twoPhaseCommit.ts`
 - [ ] Create conflict detection mechanisms in `src/sync/conflictDetector.ts`
 - [ ] Implement lock management in `src/sync/lockManager.ts`
@@ -82,7 +82,7 @@ When implementing these features, follow this priority order:
 
 If you're interested in contributing to ImpossibleDB, here are the best ways to get started:
 
-1. **Transaction Support** - Completing the server-side transaction components
+1. **Synchronization Components** - Completing the remaining synchronization components (twoPhaseCommit, conflictDetector, lockManager)
 2. **Advanced Query Features** - Adding full-text search, geospatial queries, and other advanced features
 3. **Performance Optimization** - Implementing caching for improved performance
 4. **Conflict Detection** - Implementing conflict detection and resolution mechanisms
