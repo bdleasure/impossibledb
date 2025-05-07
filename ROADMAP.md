@@ -13,19 +13,19 @@ ImpossibleDB is now production-ready with all core components implemented and te
 
 ## Short-Term Goals (Next 3 Months)
 
-### 1. Query System Enhancement (High Priority)
-- [ ] Implement the query parser in `src/query/parser.ts`
-- [ ] Develop the query planner in `src/query/planner.ts`
-- [ ] Create the query executor in `src/query/executor.ts`
-- [ ] Build the result aggregator in `src/query/aggregator.ts`
-- [ ] Add support for complex queries across multiple shards
+### 1. Query System Enhancement (Completed ✅)
+- [x] Implement the query parser in `src/query/parser.ts`
+- [x] Develop the query planner in `src/query/planner.ts`
+- [x] Create the query executor in `src/query/executor.ts`
+- [x] Build the result aggregator in `src/query/aggregator.ts`
+- [x] Add support for complex queries across multiple shards
 
-### 2. Transaction Support (High Priority)
+### 2. Transaction Support (Partially Completed)
 - [ ] Implement the transaction coordinator in `src/objects/TransactionCoordinator.ts`
 - [ ] Develop two-phase commit protocol in `src/sync/twoPhaseCommit.ts`
 - [ ] Create conflict detection mechanisms in `src/sync/conflictDetector.ts`
 - [ ] Implement lock management in `src/sync/lockManager.ts`
-- [ ] Enhance the client SDK with transaction support in `src/client/Transaction.ts`
+- [x] Enhance the client SDK with transaction support in `src/client/Transaction.ts`
 
 ### 3. Performance Optimization (Medium Priority)
 - [ ] Implement caching layer for frequently accessed data
@@ -81,9 +81,10 @@ When implementing these features, follow this priority order:
 
 If you're interested in contributing to ImpossibleDB, here are the best ways to get started:
 
-1. **Query System** - This is the highest priority area for immediate contribution
-2. **Transaction Support** - This is critical for making ImpossibleDB suitable for production applications
-3. **Testing** - Adding more comprehensive tests, especially integration and performance tests
-4. **Documentation** - Improving the documentation and adding examples
+1. **HTTP Client Implementation** - Implementing the actual HTTP client for communicating with the server
+2. **Transaction Support** - Completing the server-side transaction components
+3. **Advanced Query Features** - Adding full-text search, geospatial queries, and other advanced features
+4. **Performance Optimization** - Implementing caching for improved performance
+5. **Error Handling** - Adding more comprehensive error handling and retry logic
 
 For each contribution, please follow the guidelines in [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) and ensure your code aligns with the project structure in [PROJECT_MAP.md](./PROJECT_MAP.md).

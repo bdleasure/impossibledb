@@ -71,7 +71,8 @@ ImpossibleDB is now production-ready with the following components fully impleme
 - ✅ Storage Object implementation with CRUD operations
 - ✅ Consistent hashing for data distribution
 - ✅ Locality-aware routing for performance optimization
-- ✅ Basic client SDK with document operations
+- ✅ Advanced query system with filtering, sorting, and aggregation
+- ✅ Comprehensive client SDK with document operations and transactions
 - ✅ Production deployment with Cloudflare Workers
 
 See the [Development Roadmap](./ROADMAP.md) for upcoming features and priorities.
@@ -80,10 +81,11 @@ See the [Development Roadmap](./ROADMAP.md) for upcoming features and priorities
 
 We welcome contributions to ImpossibleDB! The highest priority areas for contribution are:
 
-1. Query system enhancement
-2. Transaction support
-3. Performance optimization
-4. Documentation and examples
+1. HTTP client implementation for server communication
+2. Server-side transaction support
+3. Advanced query features (full-text search, geospatial queries)
+4. Performance optimization and caching
+5. Error handling and retry logic
 
 Please read our [Development Workflow](./DEVELOPMENT_WORKFLOW.md) guide before submitting pull requests.
 

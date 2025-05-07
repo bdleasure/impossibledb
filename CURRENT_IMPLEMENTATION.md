@@ -21,11 +21,12 @@ The main worker in `src/index.ts` handles:
 - Environment-specific configuration
 
 ### Client SDK
-The client SDK in `src/client/ImpossibleDBClient.ts` implements:
+The client SDK is now fully implemented with:
 
-- Document CRUD operations
-- Collection management
-- Query builder pattern
+- `ImpossibleDBClient` in `src/client/ImpossibleDBClient.ts` - Main client interface
+- `Collection` in `src/client/Collection.ts` - Collection operations and document management
+- `Transaction` in `src/client/Transaction.ts` - Client-side transaction support
+- `QueryBuilder` in `src/client/QueryBuilder.ts` - Fluent API for building complex queries
 - Connection management with environment detection
 
 ### Data Sharding/Routing Layer
@@ -54,12 +55,22 @@ The routing layer is now fully implemented:
 - Cloudflare Workers deployment using Wrangler
 - Environment-specific configuration
 
+### Query System
+The query system is now fully implemented with:
+
+1. `QueryParser` in `src/query/parser.ts` - Parses query filters into structured expressions
+2. `QueryPlanner` in `src/query/planner.ts` - Creates execution plans for queries across shards
+3. `QueryExecutor` in `src/query/executor.ts` - Executes query plans and processes results
+4. `QueryAggregator` in `src/query/aggregator.ts` - Performs aggregation operations on query results
+
 ## Current Capabilities
 
 1. Multi-shard operations with consistent hashing
 2. Locality-aware data placement
 3. Efficient routing based on document IDs
-4. Production deployment with Cloudflare Workers
+4. Advanced query capabilities with filtering, sorting, and aggregation
+5. Client-side transaction support
+6. Production deployment with Cloudflare Workers
 
 ## Usage Example
 
@@ -76,11 +87,23 @@ const user = await db.collection('users').put('user123', {
 // Get a document
 const alice = await db.collection('users').get('user123');
 
-// Query documents
+// Query documents with advanced filtering
 const results = await db.collection('users')
   .query()
-  .filter('age', '>', 21)
+  .where('age', '>', 21)
+  .where('status', '==', 'active')
+  .sort('lastName', 'asc')
+  .limit(10)
+  .offset(20)
   .execute();
+
+// Perform transactions
+const transaction = db.createTransaction();
+transaction
+  .read('users', 'user123')
+  .write('orders', 'order456', { product: 'Widget', quantity: 5 })
+  .delete('carts', 'cart789');
+await transaction.commit();
 ```
 
 ## Test Coverage
@@ -88,7 +111,8 @@ const results = await db.collection('users')
 Unit tests are implemented for:
 - Storage Object CRUD operations
 - Storage Object query capabilities
-- Client SDK operations
+- Client SDK operations (ImpossibleDBClient, Collection, Transaction)
+- Query system components (parser, planner, executor, aggregator)
 - Consistent hashing algorithm
 - Locality manager
 - Request router
@@ -96,9 +120,10 @@ Unit tests are implemented for:
 
 ## Next Steps
 
-Future enhancements could include:
-1. Transaction support via the `TransactionCoordinator`
-2. Conflict detection and resolution in the `conflictDetector` module
-3. Advanced query capabilities in the `query` module
-4. Analytics and monitoring integration
-5. Custom domain setup with Cloudflare
+Based on our recent progress, the next priorities are:
+
+1. Implementing the HTTP client for communicating with the server
+2. Completing server-side transaction support via the `TransactionCoordinator`
+3. Adding advanced query features like full-text search and geospatial queries
+4. Implementing caching for improved performance
+5. Adding more comprehensive error handling and retry logic

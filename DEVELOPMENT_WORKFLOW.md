@@ -44,7 +44,7 @@ Follow these principles when implementing features:
 3. **Module Development Sequence**:
    - Follow the priority order in [ROADMAP.md](./ROADMAP.md)
    - Ensure dependencies are implemented before dependent modules
-   - Current focus areas: Query System and Transaction Support
+   - Current focus areas: HTTP Client Implementation and Server-side Transaction Support
 
 ### 3. Pull Request Process
 
@@ -120,7 +120,8 @@ After receiving AI-generated code:
 
 Current priority areas for contribution (see [ROADMAP.md](./ROADMAP.md) for details):
 
-1. **Query System Enhancement** - Implementing the query processing pipeline
-2. **Transaction Support** - Adding ACID transaction capabilities
-3. **Performance Optimization** - Improving speed and efficiency
-4. **Documentation** - Expanding guides and examples
+1. **HTTP Client Implementation** - Implementing the actual HTTP client for communicating with the server
+2. **Server-side Transaction Support** - Completing the transaction coordinator and related components
+3. **Advanced Query Features** - Adding full-text search, geospatial queries, and other advanced features
+4. **Performance Optimization** - Implementing caching for improved performance
+5. **Error Handling** - Adding more comprehensive error handling and retry logic
