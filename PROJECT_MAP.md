@@ -43,6 +43,7 @@ impossibledb/
 │   │   ├── Collection.ts         # Collection operations ✅
 │   │   ├── Transaction.ts        # Transaction management ✅
 │   │   ├── QueryBuilder.ts       # Query builder pattern ✅
+│   │   ├── HttpClient.ts         # HTTP communication layer ✅
 │   ├── utils/                    # Utility functions
 │   │   ├── logger.ts             # Logging utility ✅
 │   │   ├── validation.ts         # Input validation ✅
@@ -74,7 +75,8 @@ Legend:
 
 ```mermaid
 graph TD
-    Client[Client SDK] --> Router[Router]
+    Client[Client SDK] --> HttpClient[HTTP Client]
+    HttpClient --> Router[Router]
     Router --> StorageObject[Storage Object]
     Router --> QueryProcessor[Query Processor]
     QueryProcessor --> StorageObject

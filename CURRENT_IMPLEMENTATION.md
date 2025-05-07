@@ -27,6 +27,7 @@ The client SDK is now fully implemented with:
 - `Collection` in `src/client/Collection.ts` - Collection operations and document management
 - `Transaction` in `src/client/Transaction.ts` - Client-side transaction support
 - `QueryBuilder` in `src/client/QueryBuilder.ts` - Fluent API for building complex queries
+- `HttpClient` in `src/client/HttpClient.ts` - Handles API communication with robust error handling and retries
 - Connection management with environment detection
 
 ### Data Sharding/Routing Layer
@@ -122,8 +123,8 @@ Unit tests are implemented for:
 
 Based on our recent progress, the next priorities are:
 
-1. Implementing the HTTP client for communicating with the server
-2. Completing server-side transaction support via the `TransactionCoordinator`
-3. Adding advanced query features like full-text search and geospatial queries
-4. Implementing caching for improved performance
-5. Adding more comprehensive error handling and retry logic
+1. Completing server-side transaction support via the `TransactionCoordinator`
+2. Adding advanced query features like full-text search and geospatial queries
+3. Implementing caching for improved performance
+4. Adding conflict detection and resolution via the `ConflictDetector`
+5. Implementing the `LockManager` for distributed locking

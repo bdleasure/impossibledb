@@ -8,7 +8,7 @@ ImpossibleDB is now production-ready with all core components implemented and te
 
 - ✅ **Storage Object Implementation** - Fully implemented with CRUD operations, versioning, and basic querying
 - ✅ **Data Sharding/Routing Layer** - Completed with consistent hashing, locality awareness, and request routing
-- ✅ **Client SDK** - Basic implementation with document operations and simple queries
+- ✅ **Client SDK** - Comprehensive implementation with document operations, transactions, query building, and HTTP communication
 - ✅ **Deployment** - Production and development environments configured and deployed
 
 ## Short-Term Goals (Next 3 Months)
@@ -26,6 +26,7 @@ ImpossibleDB is now production-ready with all core components implemented and te
 - [ ] Create conflict detection mechanisms in `src/sync/conflictDetector.ts`
 - [ ] Implement lock management in `src/sync/lockManager.ts`
 - [x] Enhance the client SDK with transaction support in `src/client/Transaction.ts`
+- [x] Implement HTTP client for server communication in `src/client/HttpClient.ts`
 
 ### 3. Performance Optimization (Medium Priority)
 - [ ] Implement caching layer for frequently accessed data
@@ -81,10 +82,10 @@ When implementing these features, follow this priority order:
 
 If you're interested in contributing to ImpossibleDB, here are the best ways to get started:
 
-1. **HTTP Client Implementation** - Implementing the actual HTTP client for communicating with the server
-2. **Transaction Support** - Completing the server-side transaction components
-3. **Advanced Query Features** - Adding full-text search, geospatial queries, and other advanced features
-4. **Performance Optimization** - Implementing caching for improved performance
-5. **Error Handling** - Adding more comprehensive error handling and retry logic
+1. **Transaction Support** - Completing the server-side transaction components
+2. **Advanced Query Features** - Adding full-text search, geospatial queries, and other advanced features
+3. **Performance Optimization** - Implementing caching for improved performance
+4. **Conflict Detection** - Implementing conflict detection and resolution mechanisms
+5. **Lock Management** - Developing distributed locking for concurrent operations
 
 For each contribution, please follow the guidelines in [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) and ensure your code aligns with the project structure in [PROJECT_MAP.md](./PROJECT_MAP.md).
